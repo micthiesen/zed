@@ -743,6 +743,8 @@ pub enum AutoDetectedTasks {
     /// Show all auto-detected tasks from language servers and extensions.
     #[default]
     All,
+    /// Show auto-detected tasks, but sort them below user-defined tasks.
+    Deprioritized,
     /// Hide all auto-detected tasks. Only manually defined tasks from
     /// `.zed/tasks.json` and global task configuration are shown.
     Hidden,

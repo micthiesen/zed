@@ -10,7 +10,12 @@ use gpui::{
 };
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{TaskSourceKind, task_store::TaskStore};
+use project::{
+    TaskSourceKind,
+    project_settings::{AutoDetectedTasks, ProjectSettings},
+    task_store::TaskStore,
+};
+use settings::Settings as _;
 use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
 use ui::{
     ActiveTheme, Clickable, FluentBuilder as _, IconButtonShape, IconWithIndicator, Indicator,
@@ -182,8 +187,11 @@ impl TasksModal {
         } else {
             Some(used_tasks.len() - 1)
         };
+        let deprioritize_auto_detected = matches!(
+            ProjectSettings::get_global(cx).auto_detected_tasks,
+            AutoDetectedTasks::Deprioritized
+        );
         let mut new_candidates = used_tasks;
-        new_candidates.extend(lsp_tasks);
         let hide_vscode = current_resolved_tasks.iter().any(|(kind, _)| match kind {
             TaskSourceKind::Worktree {
                 id: _,
@@ -192,10 +200,7 @@ impl TasksModal {
             } => dir.file_name().is_some_and(|name| name == ".zed"),
             _ => false,
         });
-        // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
-        // We should move the filter to new_candidates instead of on current
-        // and add a test for this
-        new_candidates.extend(current_resolved_tasks.into_iter().filter(|(task_kind, _)| {
+        let filtered_current = current_resolved_tasks.into_iter().filter(|(task_kind, _)| {
             match task_kind {
                 TaskSourceKind::Worktree {
                     directory_in_worktree: dir,
@@ -204,7 +209,17 @@ impl TasksModal {
                 TaskSourceKind::Language { .. } => add_current_language_tasks,
                 _ => true,
             }
-        }));
+        });
+        if deprioritize_auto_detected {
+            new_candidates.extend(filtered_current);
+            new_candidates.extend(lsp_tasks);
+        } else {
+            new_candidates.extend(lsp_tasks);
+            // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
+            // We should move the filter to new_candidates instead of on current
+            // and add a test for this
+            new_candidates.extend(filtered_current);
+        }
         self.picker.update(cx, |picker, cx| {
             picker.delegate.task_contexts = task_contexts;
             picker.delegate.last_used_candidate_index = last_used_candidate_index;
@@ -288,8 +303,12 @@ impl PickerDelegate for TasksModalDelegate {
                     let task_position = self.task_contexts.latest_selection;
                     cx.spawn(async move |picker, cx| {
                         let (used, current) = task_list.await;
-                        let Ok((lsp_tasks, prefer_lsp)) =
+                        let Ok((lsp_tasks, prefer_lsp, deprioritize_auto_detected)) =
                             workspace.update(cx, |workspace, cx| {
+                                let deprioritize_auto_detected = matches!(
+                                    ProjectSettings::get_global(cx).auto_detected_tasks,
+                                    AutoDetectedTasks::Deprioritized
+                                );
                                 let lsp_tasks = editor::lsp_tasks(
                                     workspace.project().clone(),
                                     &lsp_task_sources,
@@ -309,7 +328,7 @@ impl PickerDelegate for TasksModalDelegate {
                                             .prefer_lsp
                                     })
                                     .unwrap_or(false);
-                                (lsp_tasks, prefer_lsp)
+                                (lsp_tasks, prefer_lsp, deprioritize_auto_detected)
                             })
                         else {
                             return Vec::new();
@@ -327,25 +346,45 @@ impl PickerDelegate for TasksModalDelegate {
                                 let mut new_candidates = used;
                                 let add_current_language_tasks =
                                     !prefer_lsp || lsp_tasks.is_empty();
-                                new_candidates.extend(lsp_tasks.into_iter().flat_map(
-                                    |(kind, tasks_with_locations)| {
-                                        tasks_with_locations
-                                            .into_iter()
-                                            .sorted_by_key(|(location, task)| {
-                                                (location.is_none(), task.resolved_label.clone())
-                                            })
-                                            .map(move |(_, task)| (kind.clone(), task))
-                                    },
-                                ));
-                                // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
-                                // We should move the filter to new_candidates instead of on current
-                                // and add a test for this
-                                new_candidates.extend(current.into_iter().filter(
-                                    |(task_kind, _)| {
-                                        add_current_language_tasks
-                                            || !matches!(task_kind, TaskSourceKind::Language { .. })
-                                    },
-                                ));
+                                let flattened_lsp_tasks =
+                                    lsp_tasks.into_iter().flat_map(
+                                        |(kind, tasks_with_locations)| {
+                                            tasks_with_locations
+                                                .into_iter()
+                                                .sorted_by_key(|(location, task)| {
+                                                    (location.is_none(), task.resolved_label.clone())
+                                                })
+                                                .map(move |(_, task)| (kind.clone(), task))
+                                        },
+                                    );
+                                if deprioritize_auto_detected {
+                                    // When deprioritized, add non-auto-detected tasks
+                                    // first, then LSP tasks after.
+                                    new_candidates.extend(current.into_iter().filter(
+                                        |(task_kind, _)| {
+                                            add_current_language_tasks
+                                                || !matches!(
+                                                    task_kind,
+                                                    TaskSourceKind::Language { .. }
+                                                )
+                                        },
+                                    ));
+                                    new_candidates.extend(flattened_lsp_tasks);
+                                } else {
+                                    new_candidates.extend(flattened_lsp_tasks);
+                                    // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
+                                    // We should move the filter to new_candidates instead of on current
+                                    // and add a test for this
+                                    new_candidates.extend(current.into_iter().filter(
+                                        |(task_kind, _)| {
+                                            add_current_language_tasks
+                                                || !matches!(
+                                                    task_kind,
+                                                    TaskSourceKind::Language { .. }
+                                                )
+                                        },
+                                    ));
+                                }
                                 let match_candidates = string_match_candidates(&new_candidates);
                                 let _ = picker.delegate.candidates.insert(new_candidates);
                                 match_candidates

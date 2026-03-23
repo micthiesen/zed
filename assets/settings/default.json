@@ -1565,6 +1565,7 @@
   // always shown regardless of this setting.
   //
   // "all": Show all auto-detected tasks.
+  // "deprioritized": Show auto-detected tasks, but sort them below user-defined tasks.
   // "hidden": Hide all auto-detected tasks.
   "auto_detected_tasks": "all",
   "edit_predictions": {

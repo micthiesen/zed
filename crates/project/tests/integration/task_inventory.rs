@@ -650,21 +650,46 @@ fn test_task_source_kind_preference_ordering() {
     };
     let user_input_kind = TaskSourceKind::UserInput;
 
+    // Default ordering: LSP > Language > UserInput > Worktree > AbsPath
+    assert!(
+        task_source_kind_preference(&lsp_kind) < task_source_kind_preference(&language_kind),
+        "LSP tasks should be preferred over language tasks"
+    );
+    assert!(
+        task_source_kind_preference(&language_kind) < task_source_kind_preference(&user_input_kind),
+        "Language tasks should be preferred over user input tasks"
+    );
+    assert!(
+        task_source_kind_preference(&user_input_kind)
+            < task_source_kind_preference(&worktree_kind),
+        "User input tasks should be preferred over worktree tasks"
+    );
     assert!(
         task_source_kind_preference(&worktree_kind) < task_source_kind_preference(&abs_path_kind),
         "Worktree tasks should be preferred over global tasks"
     );
+
+    // Deprioritized ordering: Worktree > AbsPath > UserInput > LSP > Language
+    use project::task_inventory::deprioritized_task_source_kind_preference;
     assert!(
-        task_source_kind_preference(&abs_path_kind) < task_source_kind_preference(&user_input_kind),
-        "Global tasks should be preferred over user input tasks"
+        deprioritized_task_source_kind_preference(&worktree_kind)
+            < deprioritized_task_source_kind_preference(&abs_path_kind),
+        "Worktree tasks should be preferred over global tasks when deprioritized"
     );
     assert!(
-        task_source_kind_preference(&user_input_kind) < task_source_kind_preference(&lsp_kind),
-        "User input tasks should be preferred over LSP tasks"
+        deprioritized_task_source_kind_preference(&abs_path_kind)
+            < deprioritized_task_source_kind_preference(&user_input_kind),
+        "Global tasks should be preferred over user input tasks when deprioritized"
     );
     assert!(
-        task_source_kind_preference(&lsp_kind) < task_source_kind_preference(&language_kind),
-        "LSP tasks should be preferred over language tasks"
+        deprioritized_task_source_kind_preference(&user_input_kind)
+            < deprioritized_task_source_kind_preference(&lsp_kind),
+        "User input tasks should be preferred over LSP tasks when deprioritized"
+    );
+    assert!(
+        deprioritized_task_source_kind_preference(&lsp_kind)
+            < deprioritized_task_source_kind_preference(&language_kind),
+        "LSP tasks should be preferred over language tasks when deprioritized"
     );
 }
 
@@ -673,8 +698,12 @@ fn test_auto_detected_tasks_deserialization() {
     let all: AutoDetectedTasks = serde_json::from_str(r#""all""#).unwrap();
     assert_eq!(all, AutoDetectedTasks::All);
 
-    let none: AutoDetectedTasks = serde_json::from_str(r#""hidden""#).unwrap();
-    assert_eq!(none, AutoDetectedTasks::Hidden);
+    let deprioritized: AutoDetectedTasks =
+        serde_json::from_str(r#""deprioritized""#).unwrap();
+    assert_eq!(deprioritized, AutoDetectedTasks::Deprioritized);
+
+    let hidden: AutoDetectedTasks = serde_json::from_str(r#""hidden""#).unwrap();
+    assert_eq!(hidden, AutoDetectedTasks::Hidden);
 
     assert_eq!(AutoDetectedTasks::default(), AutoDetectedTasks::All);
 }
@@ -727,5 +756,21 @@ async fn test_auto_detected_tasks_setting(cx: &mut TestAppContext) {
         vec!["worktree_task", "global_task"],
         "Worktree and global tasks should still appear when auto_detected_tasks is hidden \
          (only language/LSP tasks are filtered, which are not present in this test)"
+    );
+
+    cx.update(|cx| {
+        settings::SettingsStore::update(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.auto_detected_tasks = Some(AutoDetectedTasks::Deprioritized);
+            });
+        });
+    });
+
+    let task_names_deprioritized =
+        resolved_task_names(&inventory, Some(worktree_1), cx).await;
+    assert_eq!(
+        task_names_deprioritized,
+        vec!["worktree_task", "global_task"],
+        "Both worktree and global tasks should still appear when auto_detected_tasks is deprioritized"
     );
 }

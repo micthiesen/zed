@@ -472,16 +472,14 @@ impl Inventory {
                     post_inc(&mut lru_score),
                 )
             })
-            .sorted_unstable_by(task_lru_comparator)
+            .sorted_unstable_by(task_lru_comparator(task_source_kind_preference))
             .map(|(kind, task, _)| (kind, task))
             .collect::<Vec<_>>();
 
         let not_used_score = post_inc(&mut lru_score);
         let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
-        let show_auto_detected = matches!(
-            ProjectSettings::get_global(cx).auto_detected_tasks,
-            AutoDetectedTasks::All
-        );
+        let auto_detected_tasks_setting = ProjectSettings::get_global(cx).auto_detected_tasks;
+        let show_auto_detected = !matches!(auto_detected_tasks_setting, AutoDetectedTasks::Hidden);
         let associated_tasks = language
             .filter(|_| show_auto_detected)
             .filter(|language| {
@@ -498,6 +496,10 @@ impl Inventory {
             .into_iter()
             .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
             .collect::<Vec<_>>();
+        let preference_fn = match auto_detected_tasks_setting {
+            AutoDetectedTasks::Deprioritized => deprioritized_task_source_kind_preference,
+            _ => task_source_kind_preference,
+        };
         let task_contexts = task_contexts.clone();
         cx.background_spawn(async move {
             let language_tasks = if let Some(task) = associated_tasks {
@@ -574,7 +576,7 @@ impl Inventory {
                         }
                     }
                 })
-                .sorted_unstable_by(task_lru_comparator)
+                .sorted_unstable_by(task_lru_comparator(preference_fn))
                 .map(|(kind, task, _)| (kind, task))
                 .collect::<Vec<_>>();
 
@@ -846,32 +848,45 @@ impl Inventory {
 }
 
 fn task_lru_comparator(
-    (kind_a, task_a, lru_score_a): &(TaskSourceKind, ResolvedTask, u32),
-    (kind_b, task_b, lru_score_b): &(TaskSourceKind, ResolvedTask, u32),
+    preference_fn: fn(&TaskSourceKind) -> u32,
+) -> impl Fn(
+    &(TaskSourceKind, ResolvedTask, u32),
+    &(TaskSourceKind, ResolvedTask, u32),
 ) -> cmp::Ordering {
-    lru_score_a
-        // First, display recently used templates above all.
-        .cmp(lru_score_b)
-        // Then, ensure more specific sources are displayed first.
-        .then(task_source_kind_preference(kind_a).cmp(&task_source_kind_preference(kind_b)))
-        // After that, display first more specific tasks, using more template variables.
-        // Bonus points for tasks with symbol variables.
-        .then(task_variables_preference(task_a).cmp(&task_variables_preference(task_b)))
-        // Finally, sort by the resolved label, but a bit more specifically, to avoid mixing letters and digits.
-        .then({
-            NumericPrefixWithSuffix::from_numeric_prefixed_str(&task_a.resolved_label)
-                .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
-                    &task_b.resolved_label,
-                ))
-                .then(task_a.resolved_label.cmp(&task_b.resolved_label))
-                .then(kind_a.cmp(kind_b))
-        })
+    move |(kind_a, task_a, lru_score_a), (kind_b, task_b, lru_score_b)| {
+        lru_score_a
+            // First, display recently used templates above all.
+            .cmp(lru_score_b)
+            // Then, ensure more specific sources are displayed first.
+            .then(preference_fn(kind_a).cmp(&preference_fn(kind_b)))
+            // After that, display first more specific tasks, using more template variables.
+            // Bonus points for tasks with symbol variables.
+            .then(task_variables_preference(task_a).cmp(&task_variables_preference(task_b)))
+            // Finally, sort by the resolved label, but a bit more specifically, to avoid mixing letters and digits.
+            .then({
+                NumericPrefixWithSuffix::from_numeric_prefixed_str(&task_a.resolved_label)
+                    .cmp(&NumericPrefixWithSuffix::from_numeric_prefixed_str(
+                        &task_b.resolved_label,
+                    ))
+                    .then(task_a.resolved_label.cmp(&task_b.resolved_label))
+                    .then(kind_a.cmp(kind_b))
+            })
+    }
 }
 
-/// User-defined tasks (worktree, global, one-off commands) are ranked above
-/// auto-detected ones (LSP, language extension) because they represent explicit
-/// user intent.
 pub fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
+    match kind {
+        TaskSourceKind::Lsp { .. } => 0,
+        TaskSourceKind::Language { .. } => 1,
+        TaskSourceKind::UserInput => 2,
+        TaskSourceKind::Worktree { .. } => 3,
+        TaskSourceKind::AbsPath { .. } => 4,
+    }
+}
+
+/// Alternative preference ordering that ranks user-defined tasks above
+/// auto-detected ones, used when `auto_detected_tasks` is set to `deprioritized`.
+pub fn deprioritized_task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
     match kind {
         TaskSourceKind::Worktree { .. } => 0,
         TaskSourceKind::AbsPath { .. } => 1,
