@@ -288,28 +288,30 @@ impl PickerDelegate for TasksModalDelegate {
                     let task_position = self.task_contexts.latest_selection;
                     cx.spawn(async move |picker, cx| {
                         let (used, current) = task_list.await;
-                        let Ok((lsp_tasks, prefer_lsp)) = workspace.update(cx, |workspace, cx| {
-                            let lsp_tasks = editor::lsp_tasks(
-                                workspace.project().clone(),
-                                &lsp_task_sources,
-                                task_position,
-                                cx,
-                            );
-                            let prefer_lsp = workspace
-                                .active_item(cx)
-                                .and_then(|item| item.downcast::<Editor>())
-                                .map(|editor| {
-                                    editor
-                                        .read(cx)
-                                        .buffer()
-                                        .read(cx)
-                                        .language_settings(cx)
-                                        .tasks
-                                        .prefer_lsp
-                                })
-                                .unwrap_or(false);
-                            (lsp_tasks, prefer_lsp)
-                        }) else {
+                        let Ok((lsp_tasks, prefer_lsp)) =
+                            workspace.update(cx, |workspace, cx| {
+                                let lsp_tasks = editor::lsp_tasks(
+                                    workspace.project().clone(),
+                                    &lsp_task_sources,
+                                    task_position,
+                                    cx,
+                                );
+                                let prefer_lsp = workspace
+                                    .active_item(cx)
+                                    .and_then(|item| item.downcast::<Editor>())
+                                    .map(|editor| {
+                                        editor
+                                            .read(cx)
+                                            .buffer()
+                                            .read(cx)
+                                            .language_settings(cx)
+                                            .tasks
+                                            .prefer_lsp
+                                    })
+                                    .unwrap_or(false);
+                                (lsp_tasks, prefer_lsp)
+                            })
+                        else {
                             return Vec::new();
                         };
 

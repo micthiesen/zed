@@ -15,6 +15,8 @@ use project::LanguageServerToQuery;
 use project::LocationLink;
 use project::Project;
 use project::TaskSourceKind;
+use project::project_settings::{AutoDetectedTasks, ProjectSettings};
+use settings::Settings as _;
 use project::lsp_store::lsp_ext_command::GetLspRunnables;
 use smol::future::FutureExt as _;
 use task::ResolvedTask;
@@ -91,6 +93,13 @@ pub fn lsp_tasks(
     for_position: Option<text::Anchor>,
     cx: &mut App,
 ) -> Task<Vec<(TaskSourceKind, Vec<(Option<LocationLink>, ResolvedTask)>)>> {
+    if matches!(
+        ProjectSettings::get_global(cx).auto_detected_tasks,
+        AutoDetectedTasks::Hidden
+    ) {
+        return Task::ready(Vec::new());
+    }
+
     let lsp_task_sources = task_sources
         .iter()
         .filter_map(|(name, buffer_ids)| {

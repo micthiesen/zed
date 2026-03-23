@@ -88,6 +88,14 @@ pub struct ProjectSettingsContent {
     ///
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
+
+    /// Controls the visibility of auto-detected tasks (e.g. npm scripts from
+    /// package.json, tasks from language servers and extensions).
+    /// Manually defined tasks from `.zed/tasks.json` and global tasks are
+    /// always shown regardless of this setting.
+    ///
+    /// Default: all
+    pub auto_detected_tasks: Option<AutoDetectedTasks>,
 }
 
 #[with_fallible_options]
@@ -727,6 +735,17 @@ pub struct NodeBinarySettings {
     pub npm_path: Option<String>,
     /// If enabled, Zed will download its own copy of Node.
     pub ignore_system_version: Option<bool>,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoDetectedTasks {
+    /// Show all auto-detected tasks from language servers and extensions.
+    #[default]
+    All,
+    /// Hide all auto-detected tasks. Only manually defined tasks from
+    /// `.zed/tasks.json` and global task configuration are shown.
+    Hidden,
 }
 
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]

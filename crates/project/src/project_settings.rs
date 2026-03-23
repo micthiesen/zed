@@ -18,6 +18,7 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+pub use settings::AutoDetectedTasks;
 pub use settings::BinarySettings;
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
@@ -79,6 +80,9 @@ pub struct ProjectSettings {
 
     /// Configuration for session-related features
     pub session: SessionSettings,
+
+    /// Controls the visibility of auto-detected tasks.
+    pub auto_detected_tasks: AutoDetectedTasks,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -730,6 +734,9 @@ impl Settings for ProjectSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
                 trust_all_worktrees: content.session.unwrap().trust_all_worktrees.unwrap(),
             },
+            auto_detected_tasks: project
+                .auto_detected_tasks
+                .unwrap_or_default(),
         }
     }
 }

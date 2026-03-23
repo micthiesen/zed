@@ -19,7 +19,9 @@ use language::{
 };
 use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
-use settings::{InvalidSettingsError, parse_json_with_comments};
+use settings::{InvalidSettingsError, Settings as _, parse_json_with_comments};
+
+use crate::project_settings::{AutoDetectedTasks, ProjectSettings};
 use task::{
     DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskId, TaskTemplate,
     TaskTemplates, TaskVariables, VariableName,
@@ -476,7 +478,12 @@ impl Inventory {
 
         let not_used_score = post_inc(&mut lru_score);
         let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
+        let show_auto_detected = matches!(
+            ProjectSettings::get_global(cx).auto_detected_tasks,
+            AutoDetectedTasks::All
+        );
         let associated_tasks = language
+            .filter(|_| show_auto_detected)
             .filter(|language| {
                 language_settings(Some(language.name()), file.as_ref(), cx)
                     .tasks
@@ -861,13 +868,16 @@ fn task_lru_comparator(
         })
 }
 
+/// User-defined tasks (worktree, global, one-off commands) are ranked above
+/// auto-detected ones (LSP, language extension) because they represent explicit
+/// user intent.
 pub fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
     match kind {
-        TaskSourceKind::Lsp { .. } => 0,
-        TaskSourceKind::Language { .. } => 1,
+        TaskSourceKind::Worktree { .. } => 0,
+        TaskSourceKind::AbsPath { .. } => 1,
         TaskSourceKind::UserInput => 2,
-        TaskSourceKind::Worktree { .. } => 3,
-        TaskSourceKind::AbsPath { .. } => 4,
+        TaskSourceKind::Lsp { .. } => 3,
+        TaskSourceKind::Language { .. } => 4,
     }
 }
 

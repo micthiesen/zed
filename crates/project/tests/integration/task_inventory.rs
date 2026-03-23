@@ -2,6 +2,7 @@ use gpui::{AppContext, Entity, Task, TestAppContext};
 use itertools::Itertools;
 use paths::tasks_file;
 use pretty_assertions::assert_eq;
+use project::project_settings::AutoDetectedTasks;
 use serde_json::json;
 use settings::SettingsLocation;
 use std::path::Path;
@@ -560,8 +561,12 @@ async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
     );
 }
 
-fn init_test(_cx: &mut TestAppContext) {
+fn init_test(cx: &mut TestAppContext) {
     zlog::init_test();
+    cx.update(|cx| {
+        let settings_store = settings::SettingsStore::test(cx);
+        cx.set_global(settings_store);
+    });
     TaskStore::init(None);
 }
 
@@ -623,4 +628,104 @@ async fn list_tasks_sorted_by_last_used(
         .map(|(source_kind, task)| (source_kind, task.resolved_label))
         .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
         .collect()
+}
+
+#[test]
+fn test_task_source_kind_preference_ordering() {
+    let worktree_kind = TaskSourceKind::Worktree {
+        id: WorktreeId::from_usize(1),
+        directory_in_worktree: rel_path(".zed").into(),
+        id_base: "test".into(),
+    };
+    let abs_path_kind = TaskSourceKind::AbsPath {
+        id_base: "global".into(),
+        abs_path: paths::tasks_file().clone(),
+    };
+    let lsp_kind = TaskSourceKind::Lsp {
+        language_name: "Rust".into(),
+        server: lsp::LanguageServerId(0),
+    };
+    let language_kind = TaskSourceKind::Language {
+        name: "Rust".into(),
+    };
+    let user_input_kind = TaskSourceKind::UserInput;
+
+    assert!(
+        task_source_kind_preference(&worktree_kind) < task_source_kind_preference(&abs_path_kind),
+        "Worktree tasks should be preferred over global tasks"
+    );
+    assert!(
+        task_source_kind_preference(&abs_path_kind) < task_source_kind_preference(&user_input_kind),
+        "Global tasks should be preferred over user input tasks"
+    );
+    assert!(
+        task_source_kind_preference(&user_input_kind) < task_source_kind_preference(&lsp_kind),
+        "User input tasks should be preferred over LSP tasks"
+    );
+    assert!(
+        task_source_kind_preference(&lsp_kind) < task_source_kind_preference(&language_kind),
+        "LSP tasks should be preferred over language tasks"
+    );
+}
+
+#[test]
+fn test_auto_detected_tasks_deserialization() {
+    let all: AutoDetectedTasks = serde_json::from_str(r#""all""#).unwrap();
+    assert_eq!(all, AutoDetectedTasks::All);
+
+    let none: AutoDetectedTasks = serde_json::from_str(r#""hidden""#).unwrap();
+    assert_eq!(none, AutoDetectedTasks::Hidden);
+
+    assert_eq!(AutoDetectedTasks::default(), AutoDetectedTasks::All);
+}
+
+#[gpui::test]
+async fn test_auto_detected_tasks_setting(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_1 = WorktreeId::from_usize(1);
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id: worktree_1,
+                    path: rel_path(".zed"),
+                }),
+                Some(&mock_tasks_from_names(["worktree_task"])),
+            )
+            .unwrap();
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Global(tasks_file()),
+                Some(&mock_tasks_from_names(["global_task"])),
+            )
+            .unwrap();
+    });
+
+    let task_names_with_default =
+        resolved_task_names(&inventory, Some(worktree_1), cx).await;
+    assert_eq!(
+        task_names_with_default,
+        vec!["worktree_task", "global_task"],
+        "Both worktree and global tasks should appear with default setting"
+    );
+
+    cx.update(|cx| {
+        settings::SettingsStore::update(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.auto_detected_tasks = Some(AutoDetectedTasks::Hidden);
+            });
+        });
+    });
+
+    let task_names_after_disable =
+        resolved_task_names(&inventory, Some(worktree_1), cx).await;
+    assert_eq!(
+        task_names_after_disable,
+        vec!["worktree_task", "global_task"],
+        "Worktree and global tasks should still appear when auto_detected_tasks is hidden \
+         (only language/LSP tasks are filtered, which are not present in this test)"
+    );
 }

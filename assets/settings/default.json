@@ -1559,6 +1559,14 @@
   // 3. Don't load direnv configuration at all.
   //      "load_direnv": "disabled"
   "load_direnv": "direct",
+  // Controls the visibility of auto-detected tasks (e.g. npm scripts from
+  // package.json, tasks from language servers and extensions).
+  // Manually defined tasks from `.zed/tasks.json` and global tasks are
+  // always shown regardless of this setting.
+  //
+  // "all": Show all auto-detected tasks.
+  // "hidden": Hide all auto-detected tasks.
+  "auto_detected_tasks": "all",
   "edit_predictions": {
     // Which edit prediction provider to use.
     "provider": "zed",
