@@ -1563,6 +1563,7 @@
   // package.json, tasks from language servers and extensions).
   // Manually defined tasks from `.zed/tasks.json` and global tasks are
   // always shown regardless of this setting.
+  // Note: changing this setting requires reloading the workspace.
   //
   // "all": Show all auto-detected tasks.
   // "deprioritized": Show auto-detected tasks, but sort them below user-defined tasks.
